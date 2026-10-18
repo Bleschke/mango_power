@@ -34,7 +34,10 @@ from homeassistant.helpers.event import async_track_time_change
 from homeassistant.util import dt as dt_util
 
 from . import MangoConfigEntry
-from .const import CONF_CAPACITY_WH, DEFAULT_CAPACITY_WH, DOMAIN, MAX_INTEGRATION_GAP_S, MODEL_GW, MODEL_S
+from .const import (
+    CONF_CAPACITY_WH, CONF_EXPORT_PRICE, CONF_IMPORT_PRICE, DEFAULT_CAPACITY_WH, DEFAULT_PRICE,
+    DOMAIN, MAX_INTEGRATION_GAP_S, MODEL_GW, MODEL_S,
+)
 from .coordinator import MangoDeviceCoordinator
 from .entity import MangoEntity
 
@@ -489,6 +492,18 @@ async def async_setup_entry(
         ents += [MangoSensor(site, desc, cap) for desc in SITE_SENSORS]
         ents.append(MangoSiteDailySensor(site, "energy_today_generation", "Solar energy today"))
         ents += [MangoEnergySensor(site, *spec) for spec in SITE_ENERGY]
+        today = {
+            key: MangoEnergySensor(site, f"{key}_today", f"{name} today", fn, icon, daily=True)
+            for key, name, fn, icon in SITE_ENERGY
+        }
+        ents += list(today.values())
+        # Estimated money for today's import/export, when a price is set in the options.
+        for key, label, opt in (("grid_export_energy", "Grid export value today", CONF_EXPORT_PRICE),
+                                ("grid_import_energy", "Grid import cost today", CONF_IMPORT_PRICE)):
+            price = float(entry.options.get(opt, DEFAULT_PRICE) or 0)
+            if price > 0:
+                ents.append(MangoValueSensor(site, f"{key}_value_today", label, today[key], price,
+                                             hass.config.currency))
     # Totals across all S inverters, on their own "array" device (only useful with 2 or more).
     s_coords = [c for c in entry.runtime_data.coordinators if c.model == MODEL_S]
     if len(s_coords) >= 2:
@@ -604,3 +619,28 @@ class MangoSiteDailySensor(MangoEntity, SensorEntity):
     def native_value(self):
         v = self.value
         return round(float(v), 3) if isinstance(v, (int, float)) else None
+
+
+class MangoValueSensor(MangoEntity, SensorEntity):
+    """Estimated money for an energy-today sensor: kWh x the price set in the options."""
+
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_suggested_display_precision = 2
+    _attr_icon = "mdi:cash"
+
+    def __init__(self, coordinator, key: str, name: str, energy: MangoEnergySensor, price: float,
+                 currency: str) -> None:
+        super().__init__(coordinator, key)
+        self._attr_name = name
+        self._energy = energy
+        self._price = price
+        self._attr_native_unit_of_measurement = currency
+
+    @property
+    def native_value(self) -> float:
+        return round(self._energy.native_value * self._price, 4)
+
+    @property
+    def available(self) -> bool:
+        return True

@@ -61,6 +61,9 @@ BACKUP_SOC_OPTIONS = ["85", "90", "95"]
 
 # Options
 CONF_CAPACITY_WH = "capacity_wh"
+CONF_EXPORT_PRICE = "export_price"  # per kWh, in the Home Assistant currency
+CONF_IMPORT_PRICE = "import_price"
+DEFAULT_PRICE = 0.0
 # Mango Power E: 3.5 kWh LFP (51.2 V nominal, ~67 Ah). Add expansion batteries in the options.
 DEFAULT_CAPACITY_WH = 3500
 

@@ -66,7 +66,8 @@ the site totals the app shows, as a **Mango Power site** device:
 |---|---|
 | 🔌 **Grid** | *Grid power* (L1 + L2 together; positive = importing), *Grid import power*, *Grid export power* |
 | ☀️ **Solar / home** | *Solar power*, *Home power* (= grid + solar), *Solar energy today* (calculated by the Mango cloud) |
-| 📊 **Energy** | *Grid import energy*, *Grid export energy*, *Home energy* (kWh totals built from the readings, for the Energy dashboard) |
+| 📊 **Energy** | *Grid import energy*, *Grid export energy*, *Home energy* (kWh totals built from the readings, for the Energy dashboard), plus a *… today* version of each that resets at midnight |
+| 💲 **Estimated value** | *Grid export value today* and *Grid import cost today* = energy today × the price you enter under **Configure** (per kWh, in your Home Assistant currency). Left out while the price is 0. A flat-rate estimate, not your bill. |
 
 For the Energy dashboard use these site sensors for grid and the *Mango Power S array* total for
 solar, not the single-phase Gateway Lite ones. If the cloud does not answer the site endpoints the
