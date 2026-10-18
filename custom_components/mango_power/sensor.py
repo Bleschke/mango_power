@@ -15,11 +15,15 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import (
     PERCENTAGE,
+    SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     EntityCategory,
+    UnitOfApparentPower,
+    UnitOfElectricCurrent,
     UnitOfElectricPotential,
     UnitOfEnergy,
     UnitOfFrequency,
     UnitOfPower,
+    UnitOfReactivePower,
     UnitOfTemperature,
     UnitOfTime,
 )
@@ -29,7 +33,7 @@ from homeassistant.helpers.event import async_track_time_change
 from homeassistant.util import dt as dt_util
 
 from . import MangoConfigEntry
-from .const import CONF_CAPACITY_WH, DEFAULT_CAPACITY_WH, MAX_INTEGRATION_GAP_S
+from .const import CONF_CAPACITY_WH, DEFAULT_CAPACITY_WH, MAX_INTEGRATION_GAP_S, MODEL_S
 from .coordinator import MangoDeviceCoordinator
 from .entity import MangoEntity
 
@@ -186,6 +190,66 @@ SENSORS: tuple[MangoSensorDescription, ...] = (
 )
 
 
+# ------------------------------------------------------------------ Mango Power S (microinverter)
+
+
+def _s(key, name, unit, device_class, *, icon=None, enabled=True, category=None,
+       state_class=SensorStateClass.MEASUREMENT, precision=None) -> MangoSensorDescription:
+    """A value reported as-is by the S's realtime endpoint."""
+    return MangoSensorDescription(
+        key=key, name=name, icon=icon, value_fn=_raw(key),
+        native_unit_of_measurement=unit,
+        device_class=device_class,
+        state_class=state_class,
+        entity_registry_enabled_default=enabled,
+        entity_category=category,
+        suggested_display_precision=precision,
+    )
+
+
+S_SENSORS: tuple[MangoSensorDescription, ...] = (
+    # DC side (solar panel)
+    _s("dcPower", "PV input power", UnitOfPower.WATT, SensorDeviceClass.POWER, icon="mdi:solar-power"),
+    _s("dcVoltage", "PV input voltage", UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE, precision=1),
+    _s("dcCurrent", "PV input current", UnitOfElectricCurrent.AMPERE, SensorDeviceClass.CURRENT, precision=2),
+    # AC side (to the house)
+    _s("acPower", "AC output power", UnitOfPower.WATT, SensorDeviceClass.POWER, icon="mdi:power-socket-us"),
+    _s("acVoltage", "AC voltage", UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE, precision=1),
+    _s("acCurrent", "AC current", UnitOfElectricCurrent.AMPERE, SensorDeviceClass.CURRENT, precision=2),
+    _s("acFrequency", "AC frequency", UnitOfFrequency.HERTZ, SensorDeviceClass.FREQUENCY, precision=2),
+    _s("temperature", "Temperature", UnitOfTemperature.CELSIUS, SensorDeviceClass.TEMPERATURE, precision=1),
+    # Energy, as reported by the unit (usable directly in the Energy dashboard)
+    _s("totalEnergyProduced", "Energy produced", UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY,
+       icon="mdi:solar-power-variant", state_class=SensorStateClass.TOTAL_INCREASING, precision=3),
+    _s("todayEnergy", "Energy produced today", UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY,
+       icon="mdi:solar-power-variant-outline", state_class=SensorStateClass.TOTAL_INCREASING, precision=3),
+    # diagnostics
+    _s("rssi", "Wi-Fi signal", SIGNAL_STRENGTH_DECIBELS_MILLIWATT, SensorDeviceClass.SIGNAL_STRENGTH,
+       category=EntityCategory.DIAGNOSTIC, enabled=False),
+    MangoSensorDescription(
+        key="meshLevel", name="Mesh level", icon="mdi:lan", value_fn=_raw("meshLevel"),
+        entity_category=EntityCategory.DIAGNOSTIC, entity_registry_enabled_default=False,
+    ),
+    *(d for d in SENSORS if d.key in ("lastActiveAt", "firmware")),
+)
+
+# Grid meter (Gateway Lite). The cloud reports it only through the root unit of a mesh group.
+S_METER_SENSORS: tuple[MangoSensorDescription, ...] = (
+    _s("meterPhaseAActivePower", "Meter active power", UnitOfPower.WATT, SensorDeviceClass.POWER,
+       icon="mdi:meter-electric"),
+    _s("meterPhaseAVoltage", "Meter voltage", UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE, precision=1),
+    _s("meterPhaseACurrent", "Meter current", UnitOfElectricCurrent.AMPERE, SensorDeviceClass.CURRENT, precision=2),
+    _s("meterPhaseAReactivePower", "Meter reactive power", UnitOfReactivePower.VOLT_AMPERE_REACTIVE,
+       SensorDeviceClass.REACTIVE_POWER, enabled=False),
+    _s("meterPhaseAApparentPower", "Meter apparent power", UnitOfApparentPower.VOLT_AMPERE,
+       SensorDeviceClass.APPARENT_POWER, enabled=False),
+    _s("meterPhaseAPowerFactor", "Meter power factor", None, SensorDeviceClass.POWER_FACTOR,
+       enabled=False, precision=2),
+    _s("meterRssi", "Meter Wi-Fi signal", SIGNAL_STRENGTH_DECIBELS_MILLIWATT, SensorDeviceClass.SIGNAL_STRENGTH,
+       category=EntityCategory.DIAGNOSTIC, enabled=False),
+)
+
+
 def _charge(d: Data) -> float | None:
     n = net_power(d)
     return None if n is None else max(n, 0.0)
@@ -213,6 +277,10 @@ async def async_setup_entry(
     cap = float(entry.options.get(CONF_CAPACITY_WH, DEFAULT_CAPACITY_WH))
     ents: list[SensorEntity] = []
     for coord in entry.runtime_data.coordinators:
+        if coord.model == MODEL_S:
+            descs = S_SENSORS + (S_METER_SENSORS if coord.is_group_root else ())
+            ents += [MangoSensor(coord, desc, cap) for desc in descs]
+            continue
         ents += [MangoSensor(coord, desc, cap) for desc in SENSORS]
         ents += [MangoEnergySensor(coord, *spec) for spec in ENERGY]
         # daily totals, reset at local midnight (solar enabled by default, others optional)

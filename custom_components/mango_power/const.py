@@ -38,7 +38,9 @@ CONF_USER_ID = "user_id"
 SCAN_INTERVAL = timedelta(seconds=60)
 
 # Models this integration understands (modelData.name from /device/info)
-SUPPORTED_MODELS = {"mpe": "Mango Power E"}
+MODEL_E = "mpe"  # Mango Power E battery station
+MODEL_S = "lbz_inverter"  # Mango Power S / S Pro microinverter
+SUPPORTED_MODELS = {MODEL_E: "Mango Power E", MODEL_S: "Mango Power S"}
 
 # Controls exposed by the app's Mango Power E page (sendDeviceCommand)
 MAX_AC_INPUT_OPTIONS = ["10", "15", "30"]  # US; 30 A requires the 30 A cable

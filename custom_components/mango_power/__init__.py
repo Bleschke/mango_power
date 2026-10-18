@@ -80,7 +80,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: MangoConfigEntry) -> boo
         if model not in SUPPORTED_MODELS:
             _LOGGER.info("Skipping %s: model '%s' is not supported yet", dev.get("sn"), model)
             continue
-        coord = MangoDeviceCoordinator(hass, entry, api, {**dev, "name": info.get("name") or dev.get("name")})
+        group = info.get("deviceGroup") or {}
+        root_id = group.get("rootDeviceId")
+        coord = MangoDeviceCoordinator(
+            hass,
+            entry,
+            api,
+            {
+                **dev,
+                "name": info.get("name") or dev.get("name"),
+                "model": model,
+                "group_name": group.get("name"),
+                # In a Wi-Fi mesh group only the root unit talks to the Gateway Lite meter.
+                "is_group_root": bool(root_id) and str(root_id) == str(dev["id"]),
+            },
+        )
         await coord.async_config_entry_first_refresh()
         coordinators.append(coord)
 
