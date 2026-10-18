@@ -39,13 +39,25 @@ for it, so there are no switches or selectors.
 | 🔌 **AC side** | AC output power, voltage, current and frequency |
 | 📊 **Energy** | *Energy produced* (lifetime) and *Energy produced today*, as reported by the unit; add *Energy produced* of each inverter as a solar source in the Energy dashboard |
 | 🌡️ **Diagnostics** | Temperature, online, standby, anti-backflow, last seen, firmware; Wi-Fi signal and mesh level (disabled by default) |
-| 🧮 **Grid meter** | If you have a **Gateway Lite** meter, its readings (active power, voltage, current; reactive/apparent power and power factor are disabled by default) appear on **one** inverter, the root unit of your Wi-Fi mesh group. That is how the cloud reports them. |
 
 To see your whole array at once, add a **Sum** helper (Settings → Devices & services → Helpers)
 over the *PV input power* or *AC output power* sensors of your inverters.
 
-> The Gateway Lite itself is not added as a device. Its own cloud readings are all zero on
-> systems without a battery, and its meter data is already provided through the root inverter.
+### Gateway Lite (grid meter)
+
+If you have a **Gateway Lite**, it appears as its own device with your grid readings:
+
+| | |
+|---|---|
+| 🔌 **Grid** | *Grid power* (as reported, signed), *Grid import power*, *Grid export power*, voltage and current; reactive/apparent power and power factor are disabled by default |
+| 📊 **Energy** | *Grid import energy* and *Grid export energy* (kWh totals built from the readings, for the Energy dashboard) |
+| 🩺 **Diagnostics** | Online, last seen, firmware, meter Wi-Fi signal (disabled by default) |
+
+The cloud sends the Gateway Lite's meter readings through the **root inverter** of your Wi-Fi
+mesh group, not through the gateway itself, so the integration pairs the two automatically.
+It assumes a **positive reading means you are importing from the grid**. If *Grid import power*
+reads 0 while you are clearly drawing from the grid, the sign is the other way round, so please
+open an issue.
 
 ---
 
@@ -64,7 +76,7 @@ You need:
 
 1. In Home Assistant, open **HACS**.
 2. Click the **⋮** menu (top right) → **Custom repositories**.
-3. Paste `https://github.com/Bleschke/mango_power`, set **Type** to **Integration**, click **Add**.
+3. Paste `https://github.com/aogden24-byte/mango_power`, set **Type** to **Integration**, click **Add**.
 4. Search HACS for **Mango Power**, open it and click **Download**.
 5. **Restart Home Assistant** (Settings → System → ⏻ → Restart).
 
@@ -189,14 +201,15 @@ When reporting a bug, a debug log helps a lot:
 | | Status |
 |---|---|
 | Mango Power E | ✅ Supported |
-| Mango Power S / S Pro (microinverter) | ✅ Supported (monitoring only) — grid meter data from a Gateway Lite is included |
-| Other Mango models (M, gateways, etc.) | ❌ Not yet — skipped during setup |
+| Mango Power S / S Pro (microinverter) | ✅ Supported (monitoring only) |
+| Gateway Lite (grid meter for the S) | ✅ Supported (monitoring only) |
+| Other Mango models (M, other gateways, etc.) | ❌ Not yet — skipped during setup |
 | US region | ✅ Tested |
 | EU / JP / AU / CN | ⚠️ Should work, untested — please report back! |
 
 ## Local Bluetooth (future)
 
-Mango Power E  and S / S Pro units also talk over Bluetooth using a protobuf protocol (service
+Mango Power E units also talk over Bluetooth using a protobuf protocol (service
 `00000001-6D61-6E67-6F70-6F7765722021`, characteristic `00000006-…`). Units with Wi-Fi
 module firmware W1.1.9 send live data; W1.1.5 only answers Wi-Fi setup. Local support
 is planned.

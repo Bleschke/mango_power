@@ -17,6 +17,8 @@ from .const import (
     CONF_REFRESH_TOKEN,
     CONF_REGION,
     DEFAULT_REGION,
+    MODEL_GW,
+    MODEL_S,
     REGIONS,
     SUPPORTED_MODELS,
 )
@@ -70,6 +72,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: MangoConfigEntry) -> boo
         raise ConfigEntryNotReady(str(err)) from err
 
     coordinators: list[MangoDeviceCoordinator] = []
+    gateways: list[tuple[dict, dict]] = []  # set up after the inverters they are paired with
     for dev in devices:
         try:
             info = await api.device_info(str(dev["id"]))
@@ -79,6 +82,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: MangoConfigEntry) -> boo
         model = ((info.get("modelData") or {}).get("name") or "").lower()
         if model not in SUPPORTED_MODELS:
             _LOGGER.info("Skipping %s: model '%s' is not supported yet", dev.get("sn"), model)
+            continue
+        if model == MODEL_GW:
+            gateways.append((dev, info))
             continue
         group = info.get("deviceGroup") or {}
         root_id = group.get("rootDeviceId")
@@ -95,6 +101,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: MangoConfigEntry) -> boo
                 "is_group_root": bool(root_id) and str(root_id) == str(dev["id"]),
             },
         )
+        await coord.async_config_entry_first_refresh()
+        coordinators.append(coord)
+
+    for dev, info in gateways:
+        # Pair the gateway with the root inverter that reports its meter readings: the one whose
+        # meter serial matches the gateway, or the only root inverter if there is just one.
+        roots = [c for c in coordinators if c.model == MODEL_S and c.is_group_root and not c.meter_via_gateway]
+        source = next((c for c in roots if (c.data or {}).get("meterSN") == info.get("iotSn")), None)
+        if source is None and len(roots) == 1:
+            source = roots[0]
+        if source is None:
+            _LOGGER.info("Gateway %s: no matching inverter found, grid readings will be unavailable", dev.get("sn"))
+        coord = MangoDeviceCoordinator(
+            hass,
+            entry,
+            api,
+            {
+                **dev,
+                "name": info.get("name") or dev.get("name"),
+                "model": MODEL_GW,
+                "meter_source_id": source.device_id if source else None,
+            },
+        )
+        if source is not None:
+            source.meter_via_gateway = True
         await coord.async_config_entry_first_refresh()
         coordinators.append(coord)
 

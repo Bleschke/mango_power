@@ -10,7 +10,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import MangoApi, MangoAuthError, MangoError
-from .const import DOMAIN, MODEL_E, MODEL_S, SCAN_INTERVAL, SUPPORTED_MODELS
+from .const import DOMAIN, METER_KEYS, MODEL_E, MODEL_GW, MODEL_S, SCAN_INTERVAL, SUPPORTED_MODELS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -28,6 +28,10 @@ class MangoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.model_name: str = SUPPORTED_MODELS.get(self.model, "Mango Power")
         self.group_name: str | None = device.get("group_name")
         self.is_group_root: bool = bool(device.get("is_group_root"))
+        # Gateway Lite: id of the root inverter that reports its meter readings.
+        self.meter_source_id: str | None = device.get("meter_source_id")
+        # Inverter: True once a Gateway Lite device shows the meter readings instead.
+        self.meter_via_gateway: bool = False
         name = device.get("name")
         if self.model == MODEL_S:
             # Inverters are often just named "1", "2 (left)"... in the app; make them identifiable.
@@ -49,7 +53,10 @@ class MangoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
-            rt = await self.api.realtime(self.device_id, self.tz)
+            if self.model == MODEL_GW:
+                rt = await self.api.realtime(self.meter_source_id, self.tz) if self.meter_source_id else {}
+            else:
+                rt = await self.api.realtime(self.device_id, self.tz)
             info = await self.api.device_info(self.device_id)
             # The S exposes no settings (the cloud returns an empty object), so skip that call.
             setting = await self.api.settings(self.device_id, self.tz) if self.model == MODEL_E else {}
@@ -60,6 +67,14 @@ class MangoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         state = info.get("state") or {}
         self.firmware = state.get("firmwareVersion") or self.firmware
+        if self.model == MODEL_GW:
+            return {
+                "online": state.get("status") == 1,
+                "lastActiveAt": state.get("lastActiveAt"),
+                "firmware": self.firmware,
+                **{k: rt.get(k) for k in METER_KEYS},
+            }
+
         common = {
             **{k: v for k, v in rt.items() if not isinstance(v, (dict, list))},
             "online": state.get("status") == 1,

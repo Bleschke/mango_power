@@ -33,7 +33,7 @@ from homeassistant.helpers.event import async_track_time_change
 from homeassistant.util import dt as dt_util
 
 from . import MangoConfigEntry
-from .const import CONF_CAPACITY_WH, DEFAULT_CAPACITY_WH, MAX_INTEGRATION_GAP_S, MODEL_S
+from .const import CONF_CAPACITY_WH, DEFAULT_CAPACITY_WH, MAX_INTEGRATION_GAP_S, MODEL_GW, MODEL_S
 from .coordinator import MangoDeviceCoordinator
 from .entity import MangoEntity
 
@@ -250,6 +250,50 @@ S_METER_SENSORS: tuple[MangoSensorDescription, ...] = (
 )
 
 
+# ------------------------------------------------------------------ Gateway Lite (grid meter)
+
+
+def _grid(d: Data) -> float | None:
+    v = d.get("meterPhaseAActivePower")
+    return float(v) if isinstance(v, (int, float)) else None
+
+
+def _grid_import(d: Data) -> float | None:
+    """Power drawn from the grid (positive meter reading is assumed to mean import)."""
+    g = _grid(d)
+    return None if g is None else max(g, 0.0)
+
+
+def _grid_export(d: Data) -> float | None:
+    g = _grid(d)
+    return None if g is None else max(-g, 0.0)
+
+
+GW_SENSORS: tuple[MangoSensorDescription, ...] = (
+    _s("meterPhaseAActivePower", "Grid power", UnitOfPower.WATT, SensorDeviceClass.POWER,
+       icon="mdi:transmission-tower"),
+    _power("grid_import_power", "Grid import power", lambda d, c: _grid_import(d), "mdi:transmission-tower-import"),
+    _power("grid_export_power", "Grid export power", lambda d, c: _grid_export(d), "mdi:transmission-tower-export"),
+    _s("meterPhaseAVoltage", "Grid voltage", UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE, precision=1),
+    _s("meterPhaseACurrent", "Grid current", UnitOfElectricCurrent.AMPERE, SensorDeviceClass.CURRENT, precision=2),
+    _s("meterPhaseAReactivePower", "Grid reactive power", UnitOfReactivePower.VOLT_AMPERE_REACTIVE,
+       SensorDeviceClass.REACTIVE_POWER, enabled=False),
+    _s("meterPhaseAApparentPower", "Grid apparent power", UnitOfApparentPower.VOLT_AMPERE,
+       SensorDeviceClass.APPARENT_POWER, enabled=False),
+    _s("meterPhaseAPowerFactor", "Grid power factor", None, SensorDeviceClass.POWER_FACTOR,
+       enabled=False, precision=2),
+    _s("meterRssi", "Meter Wi-Fi signal", SIGNAL_STRENGTH_DECIBELS_MILLIWATT, SensorDeviceClass.SIGNAL_STRENGTH,
+       category=EntityCategory.DIAGNOSTIC, enabled=False),
+    *(d for d in SENSORS if d.key in ("lastActiveAt", "firmware")),
+)
+
+# kWh totals integrated from the grid power, for the Energy dashboard
+GW_ENERGY: tuple[tuple[str, str, Callable[[Data], float | None], str], ...] = (
+    ("grid_import_energy", "Grid import energy", _grid_import, "mdi:transmission-tower-import"),
+    ("grid_export_energy", "Grid export energy", _grid_export, "mdi:transmission-tower-export"),
+)
+
+
 def _charge(d: Data) -> float | None:
     n = net_power(d)
     return None if n is None else max(n, 0.0)
@@ -277,8 +321,14 @@ async def async_setup_entry(
     cap = float(entry.options.get(CONF_CAPACITY_WH, DEFAULT_CAPACITY_WH))
     ents: list[SensorEntity] = []
     for coord in entry.runtime_data.coordinators:
+        if coord.model == MODEL_GW:
+            ents += [MangoSensor(coord, desc, cap) for desc in GW_SENSORS]
+            ents += [MangoEnergySensor(coord, *spec) for spec in GW_ENERGY]
+            continue
         if coord.model == MODEL_S:
-            descs = S_SENSORS + (S_METER_SENSORS if coord.is_group_root else ())
+            # Meter readings live on the Gateway Lite device when there is one.
+            with_meter = coord.is_group_root and not coord.meter_via_gateway
+            descs = S_SENSORS + (S_METER_SENSORS if with_meter else ())
             ents += [MangoSensor(coord, desc, cap) for desc in descs]
             continue
         ents += [MangoSensor(coord, desc, cap) for desc in SENSORS]
