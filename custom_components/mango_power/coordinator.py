@@ -8,11 +8,47 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .api import MangoApi, MangoAuthError, MangoError
 from .const import DOMAIN, METER_KEYS, MODEL_E, MODEL_GW, MODEL_S, SCAN_INTERVAL, SUPPORTED_MODELS
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class DailyEnergy:
+    """Energy produced since local midnight, taken from the unit's lifetime counter.
+
+    The cloud's own "today" value stays at 0 on the S, so the day's energy is the lifetime
+    counter minus its value at the start of the day. The start-of-day value is restored by the
+    sensor after a Home Assistant restart.
+    """
+
+    def __init__(self) -> None:
+        self.day: str | None = None
+        self.baseline: float | None = None  # lifetime kWh at the start of `day`
+        self.last_total: float | None = None  # last lifetime kWh seen
+        self.value: float | None = None  # kWh produced today
+
+    def update(self, total: Any) -> None:
+        if not isinstance(total, (int, float)):
+            return
+        today = dt_util.now().date().isoformat()
+        if self.day != today or self.baseline is None or total < self.baseline:
+            # new day, first reading, or the unit's counter went backwards (reset, firmware)
+            self.day, self.baseline = today, float(total)
+        self.last_total = float(total)
+        self.value = round(self.last_total - self.baseline, 4)
+
+    def restore(self, day: Any, baseline: Any) -> None:
+        """Re-apply a start-of-day value saved before a restart (same day only)."""
+        if day != dt_util.now().date().isoformat() or not isinstance(baseline, (int, float)):
+            return
+        if self.last_total is not None and self.last_total < baseline:
+            return
+        self.day, self.baseline = day, float(baseline)
+        if self.last_total is not None:
+            self.value = round(self.last_total - self.baseline, 4)
 
 
 class MangoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -32,6 +68,8 @@ class MangoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.meter_source_id: str | None = device.get("meter_source_id")
         # Inverter: True once a Gateway Lite device shows the meter readings instead.
         self.meter_via_gateway: bool = False
+        # Inverter: energy produced today, worked out from the lifetime counter.
+        self.daily = DailyEnergy()
         name = device.get("name")
         if self.model == MODEL_S:
             # Inverters are often just named "1", "2 (left)"... in the app; make them identifiable.
@@ -82,6 +120,7 @@ class MangoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "firmware": self.firmware,
         }
         if self.model == MODEL_S:
+            self.daily.update(rt.get("totalEnergyProduced"))
             # Only the mesh level is taken: the rest of meshNetwork holds Wi-Fi credentials.
             return {**common, "meshLevel": (state.get("meshNetwork") or {}).get("meshLevel")}
 

@@ -28,12 +28,13 @@ from homeassistant.const import (
     UnitOfTime,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.util import dt as dt_util
 
 from . import MangoConfigEntry
-from .const import CONF_CAPACITY_WH, DEFAULT_CAPACITY_WH, MAX_INTEGRATION_GAP_S, MODEL_GW, MODEL_S
+from .const import CONF_CAPACITY_WH, DEFAULT_CAPACITY_WH, DOMAIN, MAX_INTEGRATION_GAP_S, MODEL_GW, MODEL_S
 from .coordinator import MangoDeviceCoordinator
 from .entity import MangoEntity
 
@@ -221,8 +222,6 @@ S_SENSORS: tuple[MangoSensorDescription, ...] = (
     # Energy, as reported by the unit (usable directly in the Energy dashboard)
     _s("totalEnergyProduced", "Energy produced", UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY,
        icon="mdi:solar-power-variant", state_class=SensorStateClass.TOTAL_INCREASING, precision=3),
-    _s("todayEnergy", "Energy produced today", UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY,
-       icon="mdi:solar-power-variant-outline", state_class=SensorStateClass.TOTAL_INCREASING, precision=3),
     # diagnostics
     _s("rssi", "Wi-Fi signal", SIGNAL_STRENGTH_DECIBELS_MILLIWATT, SensorDeviceClass.SIGNAL_STRENGTH,
        category=EntityCategory.DIAGNOSTIC, enabled=False),
@@ -315,6 +314,116 @@ ENERGY: tuple[tuple[str, str, Callable[[Data], float | None], str], ...] = (
 )
 
 
+class MangoDailyEnergySensor(MangoEntity, RestoreSensor):
+    """Energy produced today by one S inverter (lifetime counter minus its value at midnight)."""
+
+    def __init__(self, coordinator: MangoDeviceCoordinator, key: str, name: str) -> None:
+        super().__init__(coordinator, key)
+        self.entity_description = SensorEntityDescription(
+            key=key, name=name, icon="mdi:solar-power-variant-outline",
+            native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+            device_class=SensorDeviceClass.ENERGY,
+            state_class=SensorStateClass.TOTAL_INCREASING,
+            suggested_display_precision=3,
+        )
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        prev = await self.async_get_last_state()
+        if prev:
+            self.coordinator.daily.restore(
+                prev.attributes.get("day"), prev.attributes.get("start_of_day_total")
+            )
+
+    @property
+    def native_value(self) -> float | None:
+        return self.coordinator.daily.value
+
+    @property
+    def extra_state_attributes(self):
+        d = self.coordinator.daily
+        return {"day": d.day, "start_of_day_total": d.baseline}
+
+    @property
+    def available(self) -> bool:
+        return self.coordinator.daily.value is not None
+
+
+def _live_sum(key: str) -> Callable[[list[MangoDeviceCoordinator]], float | None]:
+    """Sum a reported value over the inverters that answered the last poll."""
+    def fn(coords: list[MangoDeviceCoordinator]) -> float | None:
+        vals = [
+            c.data[key] for c in coords
+            if c.last_update_success and c.data and isinstance(c.data.get(key), (int, float))
+        ]
+        return round(sum(vals), 2) if vals else None
+    return fn
+
+
+def _daily_sum(coords: list[MangoDeviceCoordinator]) -> float | None:
+    vals = [c.daily.value for c in coords if c.daily.value is not None]
+    return round(sum(vals), 3) if vals else None
+
+
+def _lifetime_sum(coords: list[MangoDeviceCoordinator]) -> float | None:
+    # last known counter per inverter, so one unit going offline does not make the total dip
+    vals = [c.daily.last_total for c in coords if c.daily.last_total is not None]
+    return round(sum(vals), 3) if vals else None
+
+
+# (key, description, function over all S coordinators)
+ARRAY_SENSORS = (
+    ("ac_power", SensorEntityDescription(
+        key="ac_power", name="Total AC output power", icon="mdi:solar-power",
+        native_unit_of_measurement=UnitOfPower.WATT, device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT), _live_sum("acPower")),
+    ("dc_power", SensorEntityDescription(
+        key="dc_power", name="Total PV input power", icon="mdi:solar-panel-large",
+        native_unit_of_measurement=UnitOfPower.WATT, device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT), _live_sum("dcPower")),
+    ("energy_today", SensorEntityDescription(
+        key="energy_today", name="Total energy produced today", icon="mdi:solar-power-variant-outline",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR, device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL_INCREASING, suggested_display_precision=3), _daily_sum),
+    ("energy_total", SensorEntityDescription(
+        key="energy_total", name="Total energy produced", icon="mdi:solar-power-variant",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR, device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL_INCREASING, suggested_display_precision=3), _lifetime_sum),
+)
+
+
+class MangoArraySensor(SensorEntity):
+    """A total across all Mango Power S inverters, shown on one virtual "array" device."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+
+    def __init__(self, entry_id: str, coords: list[MangoDeviceCoordinator], key: str,
+                 description: SensorEntityDescription, fn) -> None:
+        self._coords = coords
+        self._fn = fn
+        self.entity_description = description
+        self._attr_unique_id = f"{entry_id}_s_array_{key}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{entry_id}_s_array")},
+            name="Mango Power S array",
+            manufacturer="Mango Power",
+            model="Mango Power S (all inverters)",
+        )
+
+    async def async_added_to_hass(self) -> None:
+        for coord in self._coords:
+            self.async_on_remove(coord.async_add_listener(self._refresh))
+
+    @callback
+    def _refresh(self) -> None:
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self) -> float | None:
+        return self._fn(self._coords)
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: MangoConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
@@ -330,6 +439,7 @@ async def async_setup_entry(
             with_meter = coord.is_group_root and not coord.meter_via_gateway
             descs = S_SENSORS + (S_METER_SENSORS if with_meter else ())
             ents += [MangoSensor(coord, desc, cap) for desc in descs]
+            ents.append(MangoDailyEnergySensor(coord, "todayEnergy", "Energy produced today"))
             continue
         ents += [MangoSensor(coord, desc, cap) for desc in SENSORS]
         ents += [MangoEnergySensor(coord, *spec) for spec in ENERGY]
@@ -338,6 +448,13 @@ async def async_setup_entry(
             MangoEnergySensor(coord, f"{key}_today", f"{name} today", fn, icon,
                               daily=True, enabled=(key == "solar_energy"))
             for key, name, fn, icon in ENERGY
+        ]
+    # Totals across all S inverters, on their own "array" device (only useful with 2 or more).
+    s_coords = [c for c in entry.runtime_data.coordinators if c.model == MODEL_S]
+    if len(s_coords) >= 2:
+        ents += [
+            MangoArraySensor(entry.entry_id, s_coords, key, desc, fn)
+            for key, desc, fn in ARRAY_SENSORS
         ]
     async_add_entities(ents)
 

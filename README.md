@@ -1,7 +1,5 @@
 # Mango Power for Home Assistant (unofficial)
 
-NOTE: There is a known issue with getting the Gateway Phase B (L2) and C (L3) working, as well as Import and Export Power. 
-
 See and control your **Mango Power E** power stations, and monitor your **Mango Power S / S Pro**
 solar microinverters, from Home Assistant: battery level, solar, charging, outputs, energy
 totals and more. Each unit shows up as its own device, just like ESPHome or any other
@@ -39,11 +37,9 @@ for it, so there are no switches or selectors.
 |---|---|
 | ☀️ **Solar (DC) side** | PV input power, voltage and current |
 | 🔌 **AC side** | AC output power, voltage, current and frequency |
-| 📊 **Energy** | *Energy produced* (lifetime) and *Energy produced today*, as reported by the unit; add *Energy produced* of each inverter as a solar source in the Energy dashboard |
+| 📊 **Energy** | *Energy produced* (lifetime, as reported by the unit) and *Energy produced today*. The cloud's own "today" value stays at 0, so the integration works it out as the lifetime counter minus its value at local midnight (it survives restarts; if Home Assistant was off over midnight, that morning's energy before the first reading is not counted). |
+| 🧮 **Array totals** | With two or more inverters, a **Mango Power S array** device adds *Total AC output power*, *Total PV input power*, *Total energy produced today* and *Total energy produced*. Use *Total energy produced* as your one solar source in the Energy dashboard. |
 | 🌡️ **Diagnostics** | Temperature, online, standby, anti-backflow, last seen, firmware; Wi-Fi signal and mesh level (disabled by default) |
-
-To see your whole array at once, add a **Sum** helper (Settings → Devices & services → Helpers)
-over the *PV input power* or *AC output power* sensors of your inverters.
 
 ### Gateway Lite (grid meter)
 
