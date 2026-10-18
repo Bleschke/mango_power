@@ -1,5 +1,7 @@
 # Mango Power for Home Assistant (unofficial)
 
+NOTE: There is a known issue with getting the Gateway Phase B (L2) and C (L3) working, as well as Import and Export Power. 
+
 See and control your **Mango Power E** power stations, and monitor your **Mango Power S / S Pro**
 solar microinverters, from Home Assistant: battery level, solar, charging, outputs, energy
 totals and more. Each unit shows up as its own device, just like ESPHome or any other
