@@ -64,7 +64,7 @@ You need:
 
 1. In Home Assistant, open **HACS**.
 2. Click the **⋮** menu (top right) → **Custom repositories**.
-3. Paste `https://github.com/aogden24-byte/mango_power`, set **Type** to **Integration**, click **Add**.
+3. Paste `https://github.com/Bleschke/mango_power`, set **Type** to **Integration**, click **Add**.
 4. Search HACS for **Mango Power**, open it and click **Download**.
 5. **Restart Home Assistant** (Settings → System → ⏻ → Restart).
 
@@ -196,7 +196,7 @@ When reporting a bug, a debug log helps a lot:
 
 ## Local Bluetooth (future)
 
-Mango Power E units also talk over Bluetooth using a protobuf protocol (service
+Mango Power E  and S / S Pro units also talk over Bluetooth using a protobuf protocol (service
 `00000001-6D61-6E67-6F70-6F7765722021`, characteristic `00000006-…`). Units with Wi-Fi
 module firmware W1.1.9 send live data; W1.1.5 only answers Wi-Fi setup. Local support
 is planned.
