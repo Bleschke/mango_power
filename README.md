@@ -53,9 +53,24 @@ If you have a **Gateway Lite**, it appears as its own device with your grid read
 
 The cloud sends the Gateway Lite's meter readings through the **root inverter** of your Wi-Fi
 mesh group, not through the gateway itself, so the integration pairs the two automatically.
-It assumes a **positive reading means you are importing from the grid**. If *Grid import power*
+It assumes a **positive reading means you are importing from the grid** (confirmed for the site totals above). If *Grid import power*
 reads 0 while you are clearly drawing from the grid, the sign is the other way round, so please
 open an issue.
+
+### Site totals (both grid phases)
+
+The Gateway Lite device only carries phase L1. For the whole house, the integration also reads
+the site totals the app shows, as a **Mango Power site** device:
+
+| | |
+|---|---|
+| 🔌 **Grid** | *Grid power* (L1 + L2 together; positive = importing), *Grid import power*, *Grid export power* |
+| ☀️ **Solar / home** | *Solar power*, *Home power* (= grid + solar), *Solar energy today* (calculated by the Mango cloud) |
+| 📊 **Energy** | *Grid import energy*, *Grid export energy*, *Home energy* (kWh totals built from the readings, for the Energy dashboard) |
+
+For the Energy dashboard use these site sensors for grid and the *Mango Power S array* total for
+solar, not the single-phase Gateway Lite ones. If the cloud does not answer the site endpoints the
+device is simply not created.
 
 ---
 

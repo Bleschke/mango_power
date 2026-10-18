@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
@@ -22,7 +22,7 @@ from .const import (
     REGIONS,
     SUPPORTED_MODELS,
 )
-from .coordinator import MangoDeviceCoordinator
+from .coordinator import MangoDeviceCoordinator, MangoSiteCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,6 +34,7 @@ class MangoRuntimeData:
     api: MangoApi
     coordinators: list[MangoDeviceCoordinator]
     options: dict
+    sites: list[MangoSiteCoordinator] = field(default_factory=list)
 
 
 type MangoConfigEntry = ConfigEntry[MangoRuntimeData]
@@ -129,10 +130,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: MangoConfigEntry) -> boo
         await coord.async_config_entry_first_refresh()
         coordinators.append(coord)
 
+    # Site-wide totals (both grid phases, solar, home load). Optional: never blocks setup.
+    sites: list[MangoSiteCoordinator] = []
+    if any(c.model in (MODEL_S, MODEL_GW) for c in coordinators):
+        try:
+            for site in await api.list_sites():
+                site_coord = MangoSiteCoordinator(hass, entry, api, site)
+                await site_coord.async_refresh()
+                if site_coord.last_update_success:
+                    sites.append(site_coord)
+                else:
+                    _LOGGER.info("Site totals for %s are not available: %s", site.get("name"),
+                                 site_coord.last_exception)
+        except MangoAuthError as err:
+            raise ConfigEntryAuthFailed(str(err)) from err
+        except MangoError as err:
+            _LOGGER.info("Could not list sites: %s", err)
+
     if not coordinators:
         _LOGGER.warning("No supported Mango Power devices found on this account")
 
-    entry.runtime_data = MangoRuntimeData(api=api, coordinators=coordinators, options=dict(entry.options))
+    entry.runtime_data = MangoRuntimeData(
+        api=api, coordinators=coordinators, options=dict(entry.options), sites=sites
+    )
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     return True

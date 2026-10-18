@@ -293,6 +293,41 @@ GW_ENERGY: tuple[tuple[str, str, Callable[[Data], float | None], str], ...] = (
 )
 
 
+# ------------------------------------------------------------------ Site totals (cloud, both phases)
+
+
+def _site(key: str) -> Callable[[Data], float | None]:
+    def fn(d: Data) -> float | None:
+        v = d.get(key)
+        return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+    return fn
+
+
+def _site_import(d: Data) -> float | None:
+    g = _site("grid_power")(d)
+    return None if g is None else max(g, 0.0)
+
+
+def _site_export(d: Data) -> float | None:
+    g = _site("grid_power")(d)
+    return None if g is None else max(-g, 0.0)
+
+
+SITE_SENSORS: tuple[MangoSensorDescription, ...] = (
+    _power("grid_power", "Grid power", lambda d, c: _site("grid_power")(d), "mdi:transmission-tower"),
+    _power("grid_import_power", "Grid import power", lambda d, c: _site_import(d), "mdi:transmission-tower-import"),
+    _power("grid_export_power", "Grid export power", lambda d, c: _site_export(d), "mdi:transmission-tower-export"),
+    _power("pv_power", "Solar power", lambda d, c: _site("pv_power")(d), "mdi:solar-power"),
+    _power("load_power", "Home power", lambda d, c: _site("load_power")(d), "mdi:home-lightning-bolt"),
+)
+
+SITE_ENERGY: tuple[tuple[str, str, Callable[[Data], float | None], str], ...] = (
+    ("grid_import_energy", "Grid import energy", _site_import, "mdi:transmission-tower-import"),
+    ("grid_export_energy", "Grid export energy", _site_export, "mdi:transmission-tower-export"),
+    ("load_energy", "Home energy", _site("load_power"), "mdi:home-lightning-bolt"),
+)
+
+
 def _charge(d: Data) -> float | None:
     n = net_power(d)
     return None if n is None else max(n, 0.0)
@@ -449,6 +484,11 @@ async def async_setup_entry(
                               daily=True, enabled=(key == "solar_energy"))
             for key, name, fn, icon in ENERGY
         ]
+    # Whole-site totals from the cloud (both grid phases).
+    for site in entry.runtime_data.sites:
+        ents += [MangoSensor(site, desc, cap) for desc in SITE_SENSORS]
+        ents.append(MangoSiteDailySensor(site, "energy_today_generation", "Solar energy today"))
+        ents += [MangoEnergySensor(site, *spec) for spec in SITE_ENERGY]
     # Totals across all S inverters, on their own "array" device (only useful with 2 or more).
     s_coords = [c for c in entry.runtime_data.coordinators if c.model == MODEL_S]
     if len(s_coords) >= 2:
@@ -545,3 +585,22 @@ class MangoEnergySensor(MangoEntity, RestoreSensor):
     @property
     def available(self) -> bool:
         return True  # keep totals available so the Energy dashboard never sees a gap
+
+
+class MangoSiteDailySensor(MangoEntity, SensorEntity):
+    """Energy produced today, as worked out by the Mango cloud for the whole site."""
+
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_suggested_display_precision = 2
+    _attr_icon = "mdi:solar-power-variant-outline"
+
+    def __init__(self, coordinator, key: str, name: str) -> None:
+        super().__init__(coordinator, key)
+        self._attr_name = name
+
+    @property
+    def native_value(self):
+        v = self.value
+        return round(float(v), 3) if isinstance(v, (int, float)) else None

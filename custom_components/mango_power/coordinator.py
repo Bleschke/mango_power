@@ -147,3 +147,45 @@ class MangoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise ConfigEntryAuthFailed(str(err)) from err
         except MangoError as err:
             raise HomeAssistantError(f"Mango Power command failed: {err}") from err
+
+
+class MangoSiteCoordinator(DataUpdateCoordinator[dict[str, Any]]):
+    """Whole-site totals from the cloud: solar, home load and grid power over both phases.
+
+    Looks like a device coordinator (sn, device_name, ...) so the shared entity classes work.
+    """
+
+    model = "site"
+    model_name = "Site totals (cloud)"
+    group_name: str | None = None
+    firmware: str | None = None
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, api: MangoApi, site: dict[str, Any]) -> None:
+        self.api = api
+        self.site_id: str = str(site["id"])
+        self.sn = f"site_{self.site_id}"
+        self.device_name = f"Mango Power site {site.get('name')}" if site.get("name") else "Mango Power site"
+        super().__init__(
+            hass, _LOGGER, config_entry=entry, name=f"{DOMAIN}_{self.sn}", update_interval=SCAN_INTERVAL
+        )
+
+    @property
+    def tz(self) -> str:
+        return self.hass.config.time_zone or "UTC"
+
+    async def _async_update_data(self) -> dict[str, Any]:
+        try:
+            rt = await self.api.site_realtime(self.site_id, self.tz)
+        except MangoAuthError as err:
+            raise ConfigEntryAuthFailed(str(err)) from err
+        except MangoError as err:
+            raise UpdateFailed(str(err)) from err
+        data: dict[str, Any] = dict(rt)
+        try:
+            data.update(await self.api.site_energy_today(self.site_id, self.tz))
+        except MangoAuthError as err:
+            raise ConfigEntryAuthFailed(str(err)) from err
+        except MangoError as err:  # the realtime numbers are still good
+            _LOGGER.debug("Site energy today unavailable: %s", err)
+        data["online"] = not rt.get("is_stale", False)
+        return data
