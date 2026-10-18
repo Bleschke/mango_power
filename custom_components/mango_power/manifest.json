@@ -3,6 +3,7 @@
   "name": "Mango Power (unofficial)",
   "codeowners": [
     "@aogden24-byte"
+    "@Bleschke"
   ],
   "config_flow": true,
   "documentation": "https://github.com/aogden24-byte/mango_power",
